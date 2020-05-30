@@ -15,7 +15,12 @@ func main() {
 		Root:   "for_test_only_roman",
 	})
 
-	s, err := storage.WithCacheDisk("local", cache.New())
+	s, err := storage.Disk("local")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	gcs, err := storage.WithCacheDisk("gcs", cache.New())
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -32,7 +37,26 @@ func main() {
 
 	defer reader.Close()
 
-	data, err := ioutil.ReadAll(reader)
+	if _, err := gcs.Put("/config.go", reader, &fs.HTTPOption{
+		Key:   "content-encoding",
+		Value: "foo",
+	}); err != nil {
+		log.Fatal(err)
+	}
+
+	f, err = gcs.Get("/config.go")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	rr, err := f.Open()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	defer rr.Close()
+
+	data, err := ioutil.ReadAll(rr)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -43,7 +67,7 @@ func main() {
 		log.Fatal(err)
 	}*/
 
-	if err := s.Files("").ForFileError(func(f fs.File) error {
+	if err := gcs.Files("").ForError(func(f fs.File) error {
 		log.Println("file ===> ", f.Stat().Hash())
 		log.Println("file ===> ", f.Stat().Name())
 

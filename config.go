@@ -23,6 +23,7 @@ type (
 	DiskConfig struct {
 		Driver        string
 		Root          string
+		URL           string
 		BackendConfig map[string]string
 		Timeout       time.Duration
 	}

@@ -10,6 +10,7 @@ import (
 	"github.com/rclone/rclone/fs/config/configmap"
 	"github.com/rclone/rclone/fs/filter"
 	"github.com/rclone/rclone/fs/hash"
+	"github.com/rclone/rclone/fs/object"
 	"github.com/rclone/rclone/fs/operations"
 	"github.com/rclone/rclone/fs/walk"
 
@@ -32,9 +33,9 @@ type (
 		LastModified(path string) time.Time
 		AllDirectories(path string) []string
 		Get(name string) (fs.File, error)
-		Put(path string, in io.ReadCloser) (int64, error)
-		Files(path string, recursive ...bool) (files fs.Files)
-		Directories(path string, recursive ...bool) []string
+		Put(path string, in io.ReadCloser, metadata ...*fs.HTTPOption) (int64, error)
+		Files(path string, recursive ...bool) fs.Files
+		Directories(path string, recursive ...bool) fs.Dirs
 		TemporaryURL(path string, expire time.Duration) (string, error)
 	}
 
@@ -117,13 +118,23 @@ func (s *storage) TemporaryURL(path string, expire time.Duration) (string, error
 	return operations.PublicLink(ctx, s.backend, path)
 }
 
-func (s *storage) Put(path string, in io.ReadCloser) (int64, error) {
+func (s *storage) Put(path string, in io.ReadCloser, metadata ...*fs.HTTPOption) (int64, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), s.Config.Timeout)
 	defer cancel()
 
-	o, err := operations.Rcat(ctx, s.backend, path, in, time.Now())
+	var options []rfs.OpenOption
+	for _, option := range metadata {
+		options = append(options, option)
+	}
+
+	objInfo := object.NewStaticObjectInfo(path, time.Now(), -1, false, nil, nil)
+	o, err := s.backend.Put(ctx, in, objInfo, options...)
 	if err != nil {
 		return 0, err
+	}
+
+	if s.cacheStore != nil {
+		s.cacheStore.Put(path, fs.ObjectWrapper(o))
 	}
 
 	return o.Size(), nil
@@ -243,7 +254,7 @@ func (s *storage) AllDirectories(path string) []string {
 	return s.Directories(path, true)
 }
 
-func (s *storage) Directories(path string, recursive ...bool) (dirs []string) {
+func (s *storage) Directories(path string, recursive ...bool) (dirs fs.Dirs) {
 	ctx, cancel := context.WithTimeout(context.Background(), s.Config.Timeout)
 	defer cancel()
 
