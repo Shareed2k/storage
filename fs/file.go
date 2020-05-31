@@ -4,18 +4,22 @@ import (
 	"context"
 	"errors"
 	"io"
+	"path/filepath"
 	"time"
 
 	"github.com/rclone/rclone/fs"
 	"github.com/rclone/rclone/fs/hash"
+	"github.com/rclone/rclone/fs/operations"
 )
 
 var ErrStop = errors.New("stop iter")
 
 type (
 	File interface {
-		Name() string
+		Path() string
 		Stat() FileInfo
+		Move(newPath string) error
+		Copy(newPath string) error
 		Open() (io.ReadCloser, error)
 		Update(in io.ReadCloser, metadata ...*HTTPOption) error
 	}
@@ -46,15 +50,15 @@ func ObjectWrapper(o fs.Object) File {
 	return &file{object: o}
 }
 
-func (f file) Name() string {
+func (f *file) Path() string {
 	return f.object.Remote()
 }
 
-func (f file) Stat() FileInfo {
+func (f *file) Stat() FileInfo {
 	return &fileInfo{object: f.object}
 }
 
-func (f file) Open() (io.ReadCloser, error) {
+func (f *file) Open() (io.ReadCloser, error) {
 	return f.object.Open(context.Background())
 }
 
@@ -67,20 +71,44 @@ func (f *file) Update(in io.ReadCloser, metadata ...*HTTPOption) error {
 	return f.object.Update(context.Background(), in, f.object, options...)
 }
 
-func (f fileInfo) Name() string {
-	return f.object.Remote()
+func (f *file) Copy(newPath string) error {
+	backend := f.object.Fs().(fs.Fs)
+	newO, err := operations.Copy(context.Background(), backend, nil, newPath, f.object)
+	if err != nil {
+		return err
+	}
+
+	f.object = newO
+
+	return nil
 }
 
-func (f fileInfo) Hash() string {
+func (f *file) Move(newPath string) error {
+	backend := f.object.Fs().(fs.Fs)
+	newO, err := operations.Move(context.Background(), backend, nil, newPath, f.object)
+	if err != nil {
+		return err
+	}
+
+	f.object = newO
+
+	return nil
+}
+
+func (f *fileInfo) Name() string {
+	return filepath.Base(f.object.Remote())
+}
+
+func (f *fileInfo) Hash() string {
 	sum, _ := f.object.Hash(context.Background(), hash.MD5)
 	return sum
 }
 
-func (f fileInfo) Size() int64 {
+func (f *fileInfo) Size() int64 {
 	return f.object.Size()
 }
 
-func (f fileInfo) ModTime() time.Time {
+func (f *fileInfo) ModTime() time.Time {
 	return f.object.ModTime(context.Background())
 }
 

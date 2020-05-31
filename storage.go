@@ -3,16 +3,18 @@ package storage
 import (
 	"context"
 	"io"
+	"path"
 	"time"
 
+	"github.com/gabriel-vasile/mimetype"
 	rfs "github.com/rclone/rclone/fs"
 	"github.com/rclone/rclone/fs/config"
 	"github.com/rclone/rclone/fs/config/configmap"
-	"github.com/rclone/rclone/fs/filter"
 	"github.com/rclone/rclone/fs/hash"
 	"github.com/rclone/rclone/fs/object"
 	"github.com/rclone/rclone/fs/operations"
 	"github.com/rclone/rclone/fs/walk"
+	"github.com/rs/xid"
 
 	"github.com/shareed2k/storage/cache"
 	"github.com/shareed2k/storage/fs"
@@ -29,14 +31,16 @@ type (
 		Delete(paths ...string) error
 		URL(path string) (string, error)
 		MakeDirectory(path string) error
+		Get(name string) (fs.File, error)
 		DeleteDirectory(path string) error
 		LastModified(path string) time.Time
 		AllDirectories(path string) []string
-		Get(name string) (fs.File, error)
-		Put(path string, in io.ReadCloser, metadata ...*fs.HTTPOption) (int64, error)
+		AllFiles(path string) (files fs.Files)
 		Files(path string, recursive ...bool) fs.Files
 		Directories(path string, recursive ...bool) fs.Dirs
 		TemporaryURL(path string, expire time.Duration) (string, error)
+		Put(path string, in io.ReadCloser, metadata ...*fs.HTTPOption) (fs.File, error)
+		PutFile(dir string, in io.ReadCloser, metadata ...*fs.HTTPOption) (fs.File, error)
 	}
 
 	storage struct {
@@ -118,7 +122,33 @@ func (s *storage) TemporaryURL(path string, expire time.Duration) (string, error
 	return operations.PublicLink(ctx, s.backend, path)
 }
 
-func (s *storage) Put(path string, in io.ReadCloser, metadata ...*fs.HTTPOption) (int64, error) {
+func (s *storage) PutFile(dir string, in io.ReadCloser, metadata ...*fs.HTTPOption) (fs.File, error) {
+	mime, err := mimetype.DetectReader(in)
+	if err != nil {
+		return nil, err
+	}
+
+	id := xid.New().String()
+	extension := mime.Extension()
+
+	o, err := s.put(path.Join(dir, id+extension), in, metadata...)
+	if err != nil {
+		return nil, err
+	}
+
+	return fs.ObjectWrapper(o), nil
+}
+
+func (s *storage) Put(path string, in io.ReadCloser, metadata ...*fs.HTTPOption) (fs.File, error) {
+	o, err := s.put(path, in, metadata...)
+	if err != nil {
+		return nil, err
+	}
+
+	return fs.ObjectWrapper(o), nil
+}
+
+func (s *storage) put(path string, in io.ReadCloser, metadata ...*fs.HTTPOption) (rfs.Object, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), s.Config.Timeout)
 	defer cancel()
 
@@ -130,33 +160,33 @@ func (s *storage) Put(path string, in io.ReadCloser, metadata ...*fs.HTTPOption)
 	objInfo := object.NewStaticObjectInfo(path, time.Now(), -1, false, nil, nil)
 	o, err := s.backend.Put(ctx, in, objInfo, options...)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 
 	if s.cacheStore != nil {
 		s.cacheStore.Put(path, fs.ObjectWrapper(o))
 	}
 
-	return o.Size(), nil
+	return o, nil
 }
 
 func (s *storage) Delete(paths ...string) error {
-	for _, path := range paths {
-		if err := filter.Active.AddRule("+ " + path); err != nil {
-			return err
-		}
-	}
-
-	if err := filter.Active.AddRule("- *"); err != nil {
-		return err
-	}
-
-	defer filter.Active.Clear()
-
 	ctx, cancel := context.WithTimeout(context.Background(), s.Config.Timeout)
 	defer cancel()
 
-	return operations.Delete(ctx, s.backend)
+	delChan := make(rfs.ObjectsChan, rfs.Config.Transfers)
+	delErr := make(chan error, 1)
+	go func() {
+		delErr <- operations.DeleteFiles(ctx, delChan)
+	}()
+	for _, p := range paths {
+		if o, err := s.backend.NewObject(ctx, p); err == nil {
+			delChan <- o
+		}
+	}
+	close(delChan)
+
+	return <-delErr
 }
 
 func (s *storage) Size(path string) int64 {
@@ -275,6 +305,10 @@ func (s *storage) Directories(path string, recursive ...bool) (dirs fs.Dirs) {
 	}
 
 	return dirs
+}
+
+func (s *storage) AllFiles(path string) (files fs.Files) {
+	return s.Files(path, true)
 }
 
 func (s *storage) Files(path string, recursive ...bool) (files fs.Files) {

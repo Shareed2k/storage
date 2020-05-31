@@ -37,21 +37,28 @@ func main() {
 
 	defer reader.Close()
 
-	if _, err := gcs.Put("/config.go", reader, &fs.HTTPOption{
+	f, err = gcs.Put("/config.go", reader, &fs.HTTPOption{
 		Key:   "content-encoding",
 		Value: "foo",
-	}); err != nil {
+	})
+	if err != nil {
 		log.Fatal(err)
 	}
+
+	log.Println("path ======> ", f.Stat().Name())
 
 	f, err = gcs.Get("/config.go")
 	if err != nil {
 		log.Fatal(err)
 	}
 
+	if err := f.Copy("/jopka/koo.go"); err != nil {
+		log.Fatal(err)
+	}
+
 	rr, err := f.Open()
 	if err != nil {
-		log.Fatal(err)
+		log.Fatal("ne mogu otkryt ===> ", err)
 	}
 
 	defer rr.Close()
@@ -63,9 +70,9 @@ func main() {
 
 	log.Println("data ====> ", string(data))
 
-	/*if err := s.Delete("/tmp/bringger.50787.sock3", "/tmp/bringger.50787.sock2"); err != nil {
+	if err := gcs.Delete("/bringger.50787.sock2", "/bringger.50787.sock"); err != nil {
 		log.Fatal(err)
-	}*/
+	}
 
 	if err := gcs.Files("").ForError(func(f fs.File) error {
 		log.Println("file ===> ", f.Stat().Hash())
