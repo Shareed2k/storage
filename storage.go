@@ -1,8 +1,10 @@
 package storage
 
 import (
+	"bytes"
 	"context"
 	"io"
+	"io/ioutil"
 	"path"
 	"time"
 
@@ -124,7 +126,8 @@ func (s *storage) TemporaryURL(path string, expire time.Duration) (string, error
 }
 
 func (s *storage) PutFile(dir string, in io.ReadCloser, metadata ...*fs.HTTPOption) (fs.File, error) {
-	mime, err := mimetype.DetectReader(in)
+	body := &bytes.Buffer{}
+	mime, err := mimetype.DetectReader(io.TeeReader(in, body))
 	if err != nil {
 		return nil, err
 	}
@@ -132,7 +135,7 @@ func (s *storage) PutFile(dir string, in io.ReadCloser, metadata ...*fs.HTTPOpti
 	id := xid.New().String()
 	extension := mime.Extension()
 
-	o, err := s.put(path.Join(dir, id+extension), in, metadata...)
+	o, err := s.put(path.Join(dir, id+extension), ioutil.NopCloser(body), metadata...)
 	if err != nil {
 		return nil, err
 	}
