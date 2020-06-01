@@ -63,7 +63,8 @@ func WithCacheDisk(name string, store cache.Store) (Storage, error) {
 	}
 
 	if store == nil {
-		// use default cache
+		// use default cache,
+		// for now i did'nt find a way to use it with another stores
 		store = cache.New()
 	}
 
@@ -164,7 +165,9 @@ func (s *storage) put(path string, in io.ReadCloser, metadata ...*fs.HTTPOption)
 	}
 
 	if s.cacheStore != nil {
-		s.cacheStore.Put(path, fs.ObjectWrapper(o))
+		if err := s.cacheStore.Put(path, fs.ObjectWrapper(o)); err != nil {
+			return nil, err
+		}
 	}
 
 	return o, nil
@@ -227,12 +230,12 @@ func (s *storage) Hash(path string) string {
 	return sum
 }
 
-func (s *storage) Get(path string) (fs.File, error) {
+func (s *storage) Get(path string) (f fs.File, err error) {
 	create := func(key string) (value interface{}, ok bool, err error) {
 		ctx, cancel := context.WithTimeout(context.Background(), s.Config.Timeout)
 		defer cancel()
 
-		o, err := s.backend.NewObject(ctx, path)
+		o, err := s.backend.NewObject(ctx, key)
 		if err != nil {
 			return nil, false, err
 		}
@@ -240,19 +243,21 @@ func (s *storage) Get(path string) (fs.File, error) {
 		return fs.ObjectWrapper(o), true, nil
 	}
 
-	var f fs.File
-	if s.cacheStore == nil {
-		value, ok, err := create(path)
-		if err != nil && !ok {
+	if s.cacheStore != nil {
+		f, err = s.cacheStore.Get(path, create)
+		if err != nil {
 			return nil, err
 		}
 
-		f = value.(fs.File)
-	} else {
-		return s.cacheStore.Get(path, create)
+		return f, nil
 	}
 
-	return f, nil
+	value, ok, err := create(path)
+	if err != nil && !ok {
+		return nil, err
+	}
+
+	return value.(fs.File), nil
 }
 
 func (s *storage) Exists(path string) bool {

@@ -4,7 +4,6 @@ import (
 	"errors"
 
 	"github.com/rclone/rclone/lib/cache"
-
 	"github.com/shareed2k/storage/fs"
 )
 
@@ -28,8 +27,10 @@ func (c *memory) Entries() int {
 	return c.Cache.Entries()
 }
 
-func (c *memory) Put(path string, file fs.File) {
+func (c *memory) Put(path string, file fs.File) error {
 	c.Cache.Put(path, file)
+
+	return nil
 }
 
 func (c *memory) Rename(oldPath, newPath string) (file fs.File, found bool) {
